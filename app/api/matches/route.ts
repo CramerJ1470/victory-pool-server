@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { MatchSchema } from "@/lib/schema";
 import { requireAdmin } from "@/lib/auth";
 import { withCors, corsPreflight } from "@/lib/cors";
+export const runtime = "nodejs";
 
 export async function OPTIONS(req: Request) {
   return corsPreflight(req);
