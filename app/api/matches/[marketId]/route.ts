@@ -57,20 +57,19 @@ export async function PATCH(req: Request, ctx: Ctx) {
     );
   }
 
-  // Fetch existing row (needed for overwrite protection + existence)
+  // Load existing row for overwrite protection + existence
   const existing = await sql`
-    SELECT market_id, request_settlement_hash, settled, status
+    SELECT market_id, request_settlement_hash
     FROM matches
     WHERE market_id = ${id}
   `;
-
   if (!existing.rows.length) {
     return withCors(req, NextResponse.json({ error: "Not found" }, { status: 404 }));
   }
 
   const existingRsh: string | null = existing.rows[0].request_settlement_hash ?? null;
 
-  // Normalize fields
+  // Normalize inputs
   const requestSettlementHash =
     hasRsh
       ? body.requestSettlementHash === null
@@ -81,13 +80,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
   const settled = hasSettled ? Boolean(body.settled) : undefined;
   const status = hasStatus ? String(body.status) : undefined;
 
-  // ✅ SAFETY CHECK: request_settlement_hash can only be set once
-  // If it already exists:
-  // - if same value => allow (idempotent)
-  // - if different value => deny overwrite
+  // ✅ Safety: request_settlement_hash can only be set once (idempotent if same)
   if (hasRsh && existingRsh) {
-    if (requestSettlementHash && requestSettlementHash.toLowerCase() === existingRsh.toLowerCase()) {
-      // idempotent: no-op, but continue other updates (settled/status) if provided
+    const incoming = requestSettlementHash;
+    if (incoming && incoming.toLowerCase() === existingRsh.toLowerCase()) {
+      // ok (idempotent) — continue, allow other fields to update
     } else {
       return withCors(
         req,
@@ -102,39 +99,31 @@ export async function PATCH(req: Request, ctx: Ctx) {
     }
   }
 
-  // Update logic
-  if (hasRsh && !hasSettled && !hasStatus) {
-    // Only rsh
-    if (!existingRsh) {
-      await sql`
-        UPDATE matches
-        SET request_settlement_hash = ${requestSettlementHash}
-        WHERE market_id = ${id}
-      `;
-    }
-  } else if (!hasRsh && hasSettled && !hasStatus) {
+  // Perform updates in safe branches (no dynamic sql fragments)
+
+  // 1) request_settlement_hash (only if provided and not already set)
+  if (hasRsh && !existingRsh) {
+    await sql`
+      UPDATE matches
+      SET request_settlement_hash = ${requestSettlementHash}
+      WHERE market_id = ${id}
+    `;
+  }
+
+  // 2) settled
+  if (hasSettled) {
     await sql`
       UPDATE matches
       SET settled = ${settled}
       WHERE market_id = ${id}
     `;
-  } else if (!hasRsh && !hasSettled && hasStatus) {
+  }
+
+  // 3) status
+  if (hasStatus) {
     await sql`
       UPDATE matches
       SET status = ${status}
-      WHERE market_id = ${id}
-    `;
-  } else {
-    // Multiple fields
-    // Only set rsh if it isn't already set (or idempotent same value)
-    const shouldSetRsh = hasRsh && !existingRsh;
-
-    await sql`
-      UPDATE matches
-      SET
-        request_settlement_hash = ${shouldSetRsh ? requestSettlementHash : sql`request_settlement_hash`},
-        settled = ${hasSettled ? settled : sql`settled`},
-        status = ${hasStatus ? status : sql`status`}
       WHERE market_id = ${id}
     `;
   }
