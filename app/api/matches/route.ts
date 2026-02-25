@@ -2,20 +2,30 @@ import { sql } from "@vercel/postgres";
 import { NextResponse } from "next/server";
 import { MatchSchema } from "@/lib/schema";
 import { requireAdmin } from "@/lib/auth";
+import { withCors, corsPreflight } from "@/lib/cors";
 
-export async function GET() {
+export async function OPTIONS(req: Request) {
+  return corsPreflight(req);
+}
+
+export async function GET(req: Request) {
   const { rows } = await sql`SELECT * FROM matches ORDER BY market_id ASC`;
-  return NextResponse.json(rows);
+  return withCors(req, NextResponse.json(rows));
 }
 
 export async function POST(req: Request) {
   const raw = await req.text();
+
   const admin = await requireAdmin(req, raw);
-  if (!admin.ok) return NextResponse.json({ error: admin.error }, { status: admin.status });
+  if (!admin.ok)
+    return withCors(
+      req,
+      NextResponse.json({ error: admin.error }, { status: admin.status })
+    );
 
   const parsed = MatchSchema.safeParse(JSON.parse(raw));
   if (!parsed.success)
-    return NextResponse.json(parsed.error.flatten(), { status: 400 });
+    return withCors(req, NextResponse.json(parsed.error.flatten(), { status: 400 }));
 
   const m = parsed.data;
 
@@ -36,5 +46,5 @@ export async function POST(req: Request) {
     ON CONFLICT (market_id) DO NOTHING;
   `;
 
-  return NextResponse.json({ ok: true });
+  return withCors(req, NextResponse.json({ ok: true }));
 }
